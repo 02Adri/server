@@ -20,10 +20,16 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Asegúrate de que la carpeta 'uploads' exista antes de intentar guardar archivos
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 // Configuración de almacenamiento con multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Carpeta donde se almacenarán los archivos
+    cb(null, uploadsDir); // Carpeta donde se almacenarán los archivos
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname); // Obtener la extensión del archivo
@@ -34,7 +40,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Servir archivos estáticos desde la carpeta "uploads"
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(uploadsDir));
 
 // Ruta para subir archivos
 app.post("/upload", upload.single("docxFile"), (req, res) => {
@@ -47,7 +53,7 @@ app.post("/upload", upload.single("docxFile"), (req, res) => {
 
 // Ruta para listar documentos
 app.get("/documents", (req, res) => {
-  fs.readdir("uploads", (err, files) => {
+  fs.readdir(uploadsDir, (err, files) => {
     if (err) {
       return res.status(500).send("Error al leer los archivos");
     }
