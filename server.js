@@ -5,6 +5,15 @@ const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// Configuración de CORS
+app.use(cors({
+  origin: 'https://diazprueba.netlify.app', // Origen permitido
+  methods: ['GET', 'POST'], // Métodos permitidos
+  allowedHeaders: ['Content-Type', 'Authorization'], // Encabezados permitidos
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Configuración de almacenamiento con multer
 const storage = multer.diskStorage({
