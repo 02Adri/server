@@ -85,11 +85,13 @@ app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto exitoso ${PORT}`);
 });
 */
+
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const cors = require("cors");
+const cron = require("node-cron");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -113,6 +115,20 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Archivo para almacenar el mapeo de nombres
+const fileMappingPath = path.join(__dirname, "fileMapping.json");
+
+// Leer o inicializar el mapeo de archivos
+let fileMapping = {};
+if (fs.existsSync(fileMappingPath)) {
+  fileMapping = JSON.parse(fs.readFileSync(fileMappingPath, "utf-8"));
+}
+
+// Guardar el mapeo en el archivo JSON
+function saveFileMapping() {
+  fs.writeFileSync(fileMappingPath, JSON.stringify(fileMapping, null, 2));
+}
+
 // Configuración de almacenamiento con multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -120,15 +136,11 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname); // Obtener la extensión del archivo
-    const timestamp = Date.now(); // Timestamp para identificar el momento de subida
-    cb(null, `${timestamp}${ext}`); // Renombrar archivo con un timestamp
+    cb(null, `${Date.now()}${ext}`); // Renombrar archivo con un timestamp
   },
 });
 
 const upload = multer({ storage });
-
-// Variable para almacenar el mapeo de nombres originales y fechas de subida
-let fileMapping = {};
 
 // Servir archivos estáticos desde la carpeta "uploads"
 app.use("/uploads", express.static(uploadsDir));
@@ -139,42 +151,46 @@ app.post("/upload", upload.single("docxFile"), (req, res) => {
     return res.status(400).send("No se subió ningún archivo");
   }
 
-  // Guardar el mapeo del nombre original y la fecha de subida
-  const timestamp = parseInt(path.basename(req.file.filename, path.extname(req.file.filename)));
-  fileMapping[req.file.filename] = { 
-    originalName: req.file.originalname, 
-    uploadedAt: timestamp 
+  // Guardar mapeo con fecha de subida
+  fileMapping[req.file.filename] = {
+    originalName: req.file.originalname,
+    uploadDate: new Date().toISOString(),
   };
 
+  saveFileMapping();
   res.status(200).send("Archivo subido correctamente");
 });
 
-// Ruta para listar documentos válidos (con duración de 1 mes)
+// Ruta para listar documentos con nombres originales
 app.get("/documents", (req, res) => {
-  fs.readdir(uploadsDir, (err, files) => {
-    if (err) {
-      return res.status(500).send("Error al leer los archivos");
+  const files = Object.entries(fileMapping).map(([storedName, data]) => ({
+    storedName,
+    originalName: data.originalName,
+    uploadDate: data.uploadDate,
+  }));
+
+  // Ordenar archivos por fecha de creación (más recientes primero)
+  files.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+  res.json(files);
+});
+
+// Programar limpieza de archivos expirados
+cron.schedule("0 0 * * *", () => {
+  const now = new Date();
+  Object.keys(fileMapping).forEach((fileName) => {
+    const fileData = fileMapping[fileName];
+    const filePath = path.join(uploadsDir, fileName);
+    const uploadDate = new Date(fileData.uploadDate);
+    const ageInDays = (now - uploadDate) / (1000 * 60 * 60 * 24);
+
+    if (ageInDays > 30 && fs.existsSync(filePath)) {
+      // Eliminar archivo y actualizar mapeo
+      fs.unlinkSync(filePath);
+      delete fileMapping[fileName];
     }
-
-    const oneMonthMs = 30 * 24 * 60 * 60 * 1000; // Duración de 1 mes en milisegundos
-    const now = Date.now();
-
-    // Filtrar y mapear los archivos válidos
-    const validFiles = files
-      .map((file) => {
-        const fileData = fileMapping[file];
-        if (!fileData) return null; // Ignorar archivos sin mapeo
-        const { originalName, uploadedAt } = fileData;
-        const isValid = now - uploadedAt < oneMonthMs; // Verificar si el archivo aún es válido
-        return isValid ? { originalName, storedName: file } : null; // Devolver solo los archivos válidos
-      })
-      .filter(Boolean); // Eliminar valores nulos
-
-    // Ordenar archivos por fecha de subida (más recientes primero)
-    validFiles.sort((a, b) => b.uploadedAt - a.uploadedAt);
-
-    res.json(validFiles); // Devolver la lista de archivos válidos
   });
+
+  saveFileMapping();
 });
 
 // Iniciar el servidor
